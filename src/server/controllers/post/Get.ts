@@ -3,20 +3,23 @@ import PostModel from "../../models/post/app";
 
 const getPosts = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { search, sort = "createdAt", order = "desc", page = 1, limit = 10 } = req.query;
+    const { search, sort = "createdAt", order = "desc" } = req.query;
 
+    // Verificar campos de ordenação válidos
     const allowedSortFields = ["createdAt", "updatedAt", "subject"];
     if (!allowedSortFields.includes(sort as string)) {
       res.status(400).json({ error: "Campo de ordenação inválido." });
       return;
     }
 
+    // Verificar ordem de ordenação válida
     const allowedOrders = ["asc", "desc"];
     if (!allowedOrders.includes(order as string)) {
       res.status(400).json({ error: "Ordem de ordenação inválida." });
       return;
     }
 
+    // Normalizar e ajustar o campo de busca
     const decodedSearch = search ? decodeURIComponent(search as string) : "";
     const searchWithSpaces = decodedSearch.replace(/\+/g, " ");
     const normalizedSearch = searchWithSpaces
@@ -25,6 +28,7 @@ const getPosts = async (req: Request, res: Response): Promise<void> => {
 
     const sortOrder = order === "desc" ? -1 : 1;
 
+    // Construir query para o filtro de busca
     const query = normalizedSearch
       ? {
           $or: [
@@ -37,27 +41,13 @@ const getPosts = async (req: Request, res: Response): Promise<void> => {
         }
       : {};
 
-    const pageInt = parseInt(page as string);
-    const maxLimit = 50;
-    const limitInt = Math.min(parseInt(limit as string), maxLimit);
+    // Buscar todos os posts (sem paginação ou limite)
+    const posts = await PostModel.find(query).sort({ [sort as string]: sortOrder });
+    const totalPosts = posts.length;
 
-    if (pageInt <= 0 || limitInt <= 0) {
-      res.status(400).json({ error: "Página ou limite inválidos." });
-      return;
-    }
-
-    const skip = (pageInt - 1) * limitInt;
-    const totalPosts = await PostModel.countDocuments(query);
-
-    const posts = await PostModel.find(query)
-      .skip(skip)
-      .limit(limitInt)
-      .sort({ [sort as string]: sortOrder });
     res.status(200).json({
       posts,
       total: totalPosts,
-      page: pageInt,
-      limit: limitInt,
     });
   } catch (error) {
     console.error(error);
