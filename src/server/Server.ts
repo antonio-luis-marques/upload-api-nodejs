@@ -10,10 +10,11 @@ connectDB();
 testCloudinaryConnection()
 
 server.use(cors({
-  origin: 'http://localhost:3000', // Permitir requisições desta origem
-  methods: ['GET', 'POST', 'PUT', 'DELETE'], // Métodos permitidos
-  allowedHeaders: ['Content-Type', 'Authorization'], // Cabeçalhos permitidos
+  origin: '*', // Permite qualquer origem
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
+
 
 server.use(express.json());
 server.use(router);
