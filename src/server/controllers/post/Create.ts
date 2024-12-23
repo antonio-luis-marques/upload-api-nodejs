@@ -3,20 +3,25 @@ import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
 import PostModel from "../../models/post/app";
 
+// Configuração do Cloudinary
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "",
   api_key: process.env.CLOUDINARY_API_KEY || "",
   api_secret: process.env.CLOUDINARY_API_SECRET || "",
 });
 
-const fileSizeLimit = 5 * 1024 * 1024;
+const fileSizeLimit = 50 * 1024 * 1024; // Limite de 50 MB
 
+// Configuração do Multer para upload de arquivos
 const upload = multer({
   limits: { fileSize: fileSizeLimit },
   storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
-    if (!file.mimetype.startsWith("image/")) {
-      return cb(new Error("Somente arquivos de imagem são permitidos!"));
+    const allowedMimeTypes = ["image/", "application/pdf"];
+    const isValidType = allowedMimeTypes.some((type) => file.mimetype.startsWith(type));
+
+    if (!isValidType) {
+      return cb(new Error("Somente arquivos de imagem ou PDF são permitidos!"));
     }
     cb(null, true);
   },
@@ -27,10 +32,24 @@ const uploadMiddleware = upload.fields([
   { name: "fileAnswer", maxCount: 5 },
 ]);
 
-const uploadFile = async (file: Express.Multer.File): Promise<string> => {
+// Função de upload para o Cloudinary
+const uploadFileToCloudinary = async (file: Express.Multer.File): Promise<string> => {
   return new Promise((resolve, reject) => {
+    const resourceType = file.mimetype.startsWith("image/") ? "image" : "auto"; // PDF tratado como 'auto'
+    const folderName = file.mimetype.startsWith("image/") ? "post-images" : "post-pdfs";
+
+    const sanitizedFileName = file.originalname
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "-") // Substituir caracteres especiais por "-"
+      .replace(/-+/g, "-") // Remover múltiplos "-"
+      .replace(/^-|-$/g, ""); // Remover "-" no início ou no final
+
     const stream = cloudinary.uploader.upload_stream(
-      { resource_type: "image", folder: "post-images" },
+      {
+        resource_type: resourceType,
+        folder: folderName,
+        public_id: sanitizedFileName.replace(/\.[^/.]+$/, ""), // Remove a extensão anterior
+      },
       (error, result) => {
         if (error) {
           reject(error);
@@ -43,6 +62,7 @@ const uploadFile = async (file: Express.Multer.File): Promise<string> => {
   });
 };
 
+// Função de criação do post
 const create = async (req: Request, res: Response): Promise<void> => {
   try {
     const { subject, questionTitle, questionDescription, answerTitle, answerDescription } = req.body;
@@ -58,11 +78,12 @@ const create = async (req: Request, res: Response): Promise<void> => {
     };
 
     if (!fileQuestion || fileQuestion.length === 0) {
-      res.status(400).json({ error: "Imagem(s) da pergunta são obrigatórias." });
+      res.status(400).json({ error: "Imagem(s) ou arquivo(s) PDF da pergunta são obrigatórios." });
       return;
     }
 
-    const fileQuestionUrls = await Promise.all(fileQuestion.map(uploadFile));
+    // Fazendo o upload dos arquivos PDF
+    const fileQuestionUrls = await Promise.all(fileQuestion.map(uploadFileToCloudinary));
 
     const data: Record<string, any> = {
       subject,
@@ -72,7 +93,7 @@ const create = async (req: Request, res: Response): Promise<void> => {
     };
 
     if (answerTitle || answerDescription || (fileAnswer && fileAnswer.length > 0)) {
-      const fileAnswerUrls = fileAnswer ? await Promise.all(fileAnswer.map(uploadFile)) : [];
+      const fileAnswerUrls = fileAnswer ? await Promise.all(fileAnswer.map(uploadFileToCloudinary)) : [];
 
       data.answers = [
         {
