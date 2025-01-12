@@ -2,6 +2,8 @@ import { Request, Response } from "express";
 import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
 import PostModel from "../../models/post/app";
+import { PDFDocument } from "pdf-lib";
+import sharp from "sharp";
 
 // Configuração do Cloudinary
 cloudinary.config({
@@ -34,32 +36,57 @@ const uploadMiddleware = upload.fields([
 
 // Função de upload para o Cloudinary
 const uploadFileToCloudinary = async (file: Express.Multer.File): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const resourceType = file.mimetype.startsWith("image/") ? "image" : "auto"; // PDF tratado como 'auto'
-    const folderName = file.mimetype.startsWith("image/") ? "post-images" : "post-pdfs";
+  return new Promise(async (resolve, reject) => {
+    try {
+      let buffer = file.buffer;
 
-    const sanitizedFileName = file.originalname
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, "-") // Substituir caracteres especiais por "-"
-      .replace(/-+/g, "-") // Remover múltiplos "-"
-      .replace(/^-|-$/g, ""); // Remover "-" no início ou no final
-
-    const stream = cloudinary.uploader.upload_stream(
-      {
-        resource_type: resourceType,
-        folder: folderName,
-        public_id: sanitizedFileName.replace(/\.[^/.]+$/, ""), // Remove a extensão anterior
-      },
-      (error, result) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve(result?.secure_url || "");
-        }
+      if (file.mimetype === "application/pdf") {
+        buffer = await generatePdfCover(file.buffer); // Gera capa
       }
-    );
-    stream.end(file.buffer);
+
+      const folderName = file.mimetype.startsWith("image/") ? "post-images" : "post-pdfs";
+
+      const sanitizedFileName = file.originalname
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "");
+
+      const stream = cloudinary.uploader.upload_stream(
+        {
+          resource_type: "image", // Sempre imagem após processar capa
+          folder: folderName,
+          public_id: sanitizedFileName.replace(/\.[^/.]+$/, ""),
+        },
+        (error, result) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve(result?.secure_url || "");
+          }
+        }
+      );
+
+      stream.end(buffer);
+    } catch (err) {
+      reject(err);
+    }
   });
+};
+
+const generatePdfCover = async (fileBuffer: Buffer): Promise<Buffer> => {
+  const pdfDoc = await PDFDocument.load(fileBuffer);
+  const page = pdfDoc.getPage(0); // Obtém a primeira página
+  const { width, height } = page.getSize();
+  const pdfBytes = await pdfDoc.saveAsBase64({ dataUri: false });
+
+  // Renderiza a imagem da página com Sharp
+  const imageBuffer = await sharp(Buffer.from(pdfBytes, "base64"))
+    .resize({ width: Math.floor(width), height: Math.floor(height) })
+    .png()
+    .toBuffer();
+
+  return imageBuffer;
 };
 
 // Função de criação do post
@@ -82,9 +109,27 @@ const create = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // Fazendo o upload dos arquivos PDF
-    const fileQuestionUrls = await Promise.all(fileQuestion.map(uploadFileToCloudinary));
-
+    // Fazendo o upload dos arquaaivos PDF
+    const fileQuestionUrls = await Promise.all(
+      fileQuestion.map(async (file) => {
+        const originalUrl = await uploadFileToCloudinary(file);
+    
+        // Gera a capa para PDFs
+        let coverUrl: string | undefined;
+        if (file.mimetype === "application/pdf") {
+          const coverBuffer = await generatePdfCover(file.buffer);
+          coverUrl = await uploadFileToCloudinary({
+            ...file,
+            buffer: coverBuffer,
+            originalname: `cover-${file.originalname}`,
+            mimetype: "image/png",
+          } as Express.Multer.File);
+        }
+    
+        return { original: originalUrl, cover: coverUrl };
+      })
+    );
+    
     const data: Record<string, any> = {
       subject,
       questionTitle,

@@ -16,6 +16,8 @@ exports.create = exports.uploadMiddleware = void 0;
 const multer_1 = __importDefault(require("multer"));
 const cloudinary_1 = require("cloudinary");
 const app_1 = __importDefault(require("../../models/post/app"));
+const pdf_lib_1 = require("pdf-lib");
+const sharp_1 = __importDefault(require("sharp"));
 // Configuração do Cloudinary
 cloudinary_1.v2.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "",
@@ -43,28 +45,48 @@ const uploadMiddleware = upload.fields([
 exports.uploadMiddleware = uploadMiddleware;
 // Função de upload para o Cloudinary
 const uploadFileToCloudinary = (file) => __awaiter(void 0, void 0, void 0, function* () {
-    return new Promise((resolve, reject) => {
-        const resourceType = file.mimetype.startsWith("image/") ? "image" : "auto"; // PDF tratado como 'auto'
-        const folderName = file.mimetype.startsWith("image/") ? "post-images" : "post-pdfs";
-        const sanitizedFileName = file.originalname
-            .toLowerCase()
-            .replace(/[^a-z0-9]/g, "-") // Substituir caracteres especiais por "-"
-            .replace(/-+/g, "-") // Remover múltiplos "-"
-            .replace(/^-|-$/g, ""); // Remover "-" no início ou no final
-        const stream = cloudinary_1.v2.uploader.upload_stream({
-            resource_type: resourceType,
-            folder: folderName,
-            public_id: sanitizedFileName.replace(/\.[^/.]+$/, ""), // Remove a extensão anterior
-        }, (error, result) => {
-            if (error) {
-                reject(error);
+    return new Promise((resolve, reject) => __awaiter(void 0, void 0, void 0, function* () {
+        try {
+            let buffer = file.buffer;
+            if (file.mimetype === "application/pdf") {
+                buffer = yield generatePdfCover(file.buffer); // Gera capa
             }
-            else {
-                resolve((result === null || result === void 0 ? void 0 : result.secure_url) || "");
-            }
-        });
-        stream.end(file.buffer);
-    });
+            const folderName = file.mimetype.startsWith("image/") ? "post-images" : "post-pdfs";
+            const sanitizedFileName = file.originalname
+                .toLowerCase()
+                .replace(/[^a-z0-9]/g, "-")
+                .replace(/-+/g, "-")
+                .replace(/^-|-$/g, "");
+            const stream = cloudinary_1.v2.uploader.upload_stream({
+                resource_type: "image", // Sempre imagem após processar capa
+                folder: folderName,
+                public_id: sanitizedFileName.replace(/\.[^/.]+$/, ""),
+            }, (error, result) => {
+                if (error) {
+                    reject(error);
+                }
+                else {
+                    resolve((result === null || result === void 0 ? void 0 : result.secure_url) || "");
+                }
+            });
+            stream.end(buffer);
+        }
+        catch (err) {
+            reject(err);
+        }
+    }));
+});
+const generatePdfCover = (fileBuffer) => __awaiter(void 0, void 0, void 0, function* () {
+    const pdfDoc = yield pdf_lib_1.PDFDocument.load(fileBuffer);
+    const page = pdfDoc.getPage(0); // Obtém a primeira página
+    const { width, height } = page.getSize();
+    const pdfBytes = yield pdfDoc.saveAsBase64({ dataUri: false });
+    // Renderiza a imagem da página com Sharp
+    const imageBuffer = yield (0, sharp_1.default)(Buffer.from(pdfBytes, "base64"))
+        .resize({ width: Math.floor(width), height: Math.floor(height) })
+        .png()
+        .toBuffer();
+    return imageBuffer;
 });
 // Função de criação do post
 const create = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
@@ -79,8 +101,17 @@ const create = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
             res.status(400).json({ error: "Imagem(s) ou arquivo(s) PDF da pergunta são obrigatórios." });
             return;
         }
-        // Fazendo o upload dos arquivos PDF
-        const fileQuestionUrls = yield Promise.all(fileQuestion.map(uploadFileToCloudinary));
+        // Fazendo o upload dos arquaaivos PDF
+        const fileQuestionUrls = yield Promise.all(fileQuestion.map((file) => __awaiter(void 0, void 0, void 0, function* () {
+            const originalUrl = yield uploadFileToCloudinary(file);
+            // Gera a capa para PDFs
+            let coverUrl;
+            if (file.mimetype === "application/pdf") {
+                const coverBuffer = yield generatePdfCover(file.buffer);
+                coverUrl = yield uploadFileToCloudinary(Object.assign(Object.assign({}, file), { buffer: coverBuffer, originalname: `cover-${file.originalname}`, mimetype: "image/png" }));
+            }
+            return { original: originalUrl, cover: coverUrl };
+        })));
         const data = {
             subject,
             questionTitle,
