@@ -2,9 +2,6 @@ import { Request, Response } from "express";
 import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
 import PostModel from "../../models/post/app";
-import { PdfDocument, ImageType } from "@ironsoftware/ironpdf";
-import path from "path";
-import fs from "fs/promises";
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "",
@@ -12,8 +9,10 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET || "",
 });
 
-const fileSizeLimit = 10 * 1024 * 1024; // Aumentado para suportar PDFs maiores
+// Limite de tamanho dos arquivos
+const fileSizeLimit = 10 * 1024 * 1024; // 10 MB
 
+// Configuração do Multer
 const upload = multer({
   limits: { fileSize: fileSizeLimit },
   storage: multer.memoryStorage(),
@@ -31,7 +30,11 @@ const uploadMiddleware = upload.fields([
 ]);
 
 // Função para enviar arquivo ao Cloudinary
-const uploadToCloudinary = async (buffer: Buffer, folder: string, resourceType: "image" | "raw"): Promise<string> => {
+const uploadToCloudinary = async (
+  buffer: Buffer,
+  folder: string,
+  resourceType: "image" | "raw"
+): Promise<string> => {
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       { folder, resource_type: resourceType },
@@ -47,60 +50,39 @@ const uploadToCloudinary = async (buffer: Buffer, folder: string, resourceType: 
   });
 };
 
-// Função para processar PDFs e gerar capa
-const processPdf = async (fileBuffer: Buffer): Promise<{ pdfUrl: string; coverImageUrl: string }> => {
-  const tempPdfPath = path.join(__dirname, "temp.pdf");
-  const tempImagePath = path.join(__dirname, "temp-page.jpg");
-
-  // Salvar PDF temporariamente
-  await fs.writeFile(tempPdfPath, fileBuffer);
-
-  try {
-    const pdf = await PdfDocument.fromFile(tempPdfPath);
-
-    // Gerar imagem da primeira página
-    await pdf.rasterizeToImageFiles(tempImagePath, {
-      type: ImageType.JPG,
-      fromPages: [0],
-    });
-
-    const pdfUrl = await uploadToCloudinary(fileBuffer, "post-pdfs", "raw");
-    const coverImageBuffer = await fs.readFile(tempImagePath);
-    const coverImageUrl = await uploadToCloudinary(coverImageBuffer, "post-images", "image");
-
-    return { pdfUrl, coverImageUrl };
-  } finally {
-    // Limpar arquivos temporários
-    await fs.unlink(tempPdfPath).catch(() => { });
-    await fs.unlink(tempImagePath).catch(() => { });
-  }
-};
-
-// Função para processar os arquivos de pergunta e resposta
-const processFiles = async (files: Express.Multer.File[], folder: string, isQuestion: boolean) => {
+// Processamento de arquivos
+const processFiles = async (files: Express.Multer.File[], folder: string) => {
   return Promise.all(
     files.map(async (file) => {
-      if (file.mimetype === "application/pdf") {
-        const { pdfUrl, coverImageUrl } = await processPdf(file.buffer);
-        return isQuestion
-          ? { original: pdfUrl, cover: coverImageUrl }
-          : { original: pdfUrl, cover: coverImageUrl };
-      } else {
-        const imageUrl = await uploadToCloudinary(file.buffer, folder, "image");
-        return isQuestion
-          ? { original: imageUrl, cover: imageUrl }
-          : { original: imageUrl, cover: imageUrl };
-      }
+      // Faz upload do arquivo original
+      const originalUrl = await uploadToCloudinary(
+        file.buffer,
+        folder,
+        file.mimetype.startsWith("image/") ? "image" : "raw"
+      );
+
+      return { original: originalUrl }; // Retorna apenas a URL do arquivo
     })
   );
 };
 
+// Controlador para criação de posts
 const create = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { subject, questionTitle, questionDescription, answerTitle, answerDescription } = req.body;
+    const {
+      subject,
+      questionTitle,
+      questionDescription,
+      answerTitle,
+      answerDescription,
+      fileQuestionCovers,
+      fileAnswerCovers,
+    } = req.body;
 
     if (!subject || !questionTitle || !questionDescription) {
-      res.status(400).json({ error: "Os campos subject, questionTitle e questionDescription são obrigatórios." });
+      res.status(400).json({
+        error: "Os campos subject, questionTitle e questionDescription são obrigatórios.",
+      });
       return;
     }
 
@@ -114,23 +96,35 @@ const create = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const fileQuestionUrls = await processFiles(fileQuestion, "post-images", true);
+    // Processa os arquivos recebidos
+    const fileQuestionUrls = await processFiles(fileQuestion, "post-files");
+    const fileAnswerUrls = fileAnswer ? await processFiles(fileAnswer, "post-files") : [];
 
+    // Combina os dados dos arquivos com as capas enviadas (opcionais)
+    const processedQuestions = fileQuestionUrls.map((file, index) => ({
+      original: file.original,
+      cover: fileQuestionCovers?.[index] || null, // Capa opcional
+    }));
+
+    const processedAnswers = fileAnswerUrls.map((file, index) => ({
+      original: file.original,
+      cover: fileAnswerCovers?.[index] || null, // Capa opcional
+    }));
+
+    // Dados a serem salvos no banco de dados
     const data: Record<string, any> = {
       subject,
       questionTitle,
       questionDescription,
-      fileQuestionUrls,
+      fileQuestionUrls: processedQuestions,
     };
 
-    if (answerTitle || answerDescription || (fileAnswer && fileAnswer.length > 0)) {
-      const fileAnswerUrls = fileAnswer ? await processFiles(fileAnswer, "post-images", false) : [];
-
+    if (answerTitle || answerDescription || processedAnswers.length > 0) {
       data.answers = [
         {
           answerTitle: answerTitle || null,
           answerDescription: answerDescription || null,
-          fileAnswerUrls,
+          fileAnswerUrls: processedAnswers,
         },
       ];
     }
@@ -138,13 +132,10 @@ const create = async (req: Request, res: Response): Promise<void> => {
     const newPost = new PostModel(data);
     await newPost.save();
 
-    res.status(200).json({
-      msg: "Dados recebidos com sucesso!",
-      data,
-    });
+    res.status(201).json({ message: "Post criado com sucesso!", data });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ msg: "Erro interno do servidor. Tente novamente mais tarde." });
+    res.status(500).json({ error: "Erro ao criar o post." });
   }
 };
 

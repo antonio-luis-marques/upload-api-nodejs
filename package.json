@@ -5,7 +5,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc",
-    "start": "node ./build/api/index.js"
+    "start": "nodemon ./src/app.ts"
   },
   "keywords": [],
   "author": "",
@@ -25,7 +25,6 @@
     "typescript-eslint": "^8.16.0"
   },
   "dependencies": {
-    "@ironsoftware/ironpdf": "^2024.12.9",
     "bcrypt": "^5.1.1",
     "cloudinary": "^2.5.1",
     "cors": "^2.8.5",
