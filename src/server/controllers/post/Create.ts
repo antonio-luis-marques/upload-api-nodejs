@@ -50,7 +50,7 @@ const uploadToCloudinary = async (buffer: Buffer, folder: string, resourceType: 
 // Função para processar PDFs e gerar capa
 const processPdf = async (fileBuffer: Buffer): Promise<{ pdfUrl: string; coverImageUrl: string }> => {
   const tempPdfPath = path.join(__dirname, "temp.pdf");
-  const tempImagePath = path.join(__dirname, "temp-page.bmp");
+  const tempImagePath = path.join(__dirname, "temp-page.jpg");
 
   // Salvar PDF temporariamente
   await fs.writeFile(tempPdfPath, fileBuffer);
@@ -60,7 +60,7 @@ const processPdf = async (fileBuffer: Buffer): Promise<{ pdfUrl: string; coverIm
 
     // Gerar imagem da primeira página
     await pdf.rasterizeToImageFiles(tempImagePath, {
-      type: ImageType.BMP,
+      type: ImageType.JPG,
       fromPages: [0],
     });
 

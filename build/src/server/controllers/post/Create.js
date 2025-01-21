@@ -16,24 +16,21 @@ exports.create = exports.uploadMiddleware = void 0;
 const multer_1 = __importDefault(require("multer"));
 const cloudinary_1 = require("cloudinary");
 const app_1 = __importDefault(require("../../models/post/app"));
-const pdf_lib_1 = require("pdf-lib");
-const sharp_1 = __importDefault(require("sharp"));
-// Configuração do Cloudinary
+const ironpdf_1 = require("@ironsoftware/ironpdf");
+const path_1 = __importDefault(require("path"));
+const promises_1 = __importDefault(require("fs/promises"));
 cloudinary_1.v2.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "",
     api_key: process.env.CLOUDINARY_API_KEY || "",
     api_secret: process.env.CLOUDINARY_API_SECRET || "",
 });
-const fileSizeLimit = 50 * 1024 * 1024; // Limite de 50 MB
-// Configuração do Multer para upload de arquivos
+const fileSizeLimit = 10 * 1024 * 1024; // Aumentado para suportar PDFs maiores
 const upload = (0, multer_1.default)({
     limits: { fileSize: fileSizeLimit },
     storage: multer_1.default.memoryStorage(),
     fileFilter: (req, file, cb) => {
-        const allowedMimeTypes = ["image/", "application/pdf"];
-        const isValidType = allowedMimeTypes.some((type) => file.mimetype.startsWith(type));
-        if (!isValidType) {
-            return cb(new Error("Somente arquivos de imagem ou PDF são permitidos!"));
+        if (!file.mimetype.startsWith("image/") && file.mimetype !== "application/pdf") {
+            return cb(new Error("Somente imagens ou PDFs são permitidos!"));
         }
         cb(null, true);
     },
@@ -43,52 +40,61 @@ const uploadMiddleware = upload.fields([
     { name: "fileAnswer", maxCount: 5 },
 ]);
 exports.uploadMiddleware = uploadMiddleware;
-// Função de upload para o Cloudinary
-const uploadFileToCloudinary = (file) => __awaiter(void 0, void 0, void 0, function* () {
-    return new Promise((resolve, reject) => __awaiter(void 0, void 0, void 0, function* () {
-        try {
-            let buffer = file.buffer;
-            if (file.mimetype === "application/pdf") {
-                buffer = yield generatePdfCover(file.buffer); // Gera capa
+// Função para enviar arquivo ao Cloudinary
+const uploadToCloudinary = (buffer, folder, resourceType) => __awaiter(void 0, void 0, void 0, function* () {
+    return new Promise((resolve, reject) => {
+        const stream = cloudinary_1.v2.uploader.upload_stream({ folder, resource_type: resourceType }, (error, result) => {
+            if (error) {
+                reject(error);
             }
-            const folderName = file.mimetype.startsWith("image/") ? "post-images" : "post-pdfs";
-            const sanitizedFileName = file.originalname
-                .toLowerCase()
-                .replace(/[^a-z0-9]/g, "-")
-                .replace(/-+/g, "-")
-                .replace(/^-|-$/g, "");
-            const stream = cloudinary_1.v2.uploader.upload_stream({
-                resource_type: "image", // Sempre imagem após processar capa
-                folder: folderName,
-                public_id: sanitizedFileName.replace(/\.[^/.]+$/, ""),
-            }, (error, result) => {
-                if (error) {
-                    reject(error);
-                }
-                else {
-                    resolve((result === null || result === void 0 ? void 0 : result.secure_url) || "");
-                }
-            });
-            stream.end(buffer);
-        }
-        catch (err) {
-            reject(err);
-        }
-    }));
+            else {
+                resolve((result === null || result === void 0 ? void 0 : result.secure_url) || "");
+            }
+        });
+        stream.end(buffer);
+    });
 });
-const generatePdfCover = (fileBuffer) => __awaiter(void 0, void 0, void 0, function* () {
-    const pdfDoc = yield pdf_lib_1.PDFDocument.load(fileBuffer);
-    const page = pdfDoc.getPage(0); // Obtém a primeira página
-    const { width, height } = page.getSize();
-    const pdfBytes = yield pdfDoc.saveAsBase64({ dataUri: false });
-    // Renderiza a imagem da página com Sharp
-    const imageBuffer = yield (0, sharp_1.default)(Buffer.from(pdfBytes, "base64"))
-        .resize({ width: Math.floor(width), height: Math.floor(height) })
-        .png()
-        .toBuffer();
-    return imageBuffer;
+// Função para processar PDFs e gerar capa
+const processPdf = (fileBuffer) => __awaiter(void 0, void 0, void 0, function* () {
+    const tempPdfPath = path_1.default.join(__dirname, "temp.pdf");
+    const tempImagePath = path_1.default.join(__dirname, "temp-page.jpg");
+    // Salvar PDF temporariamente
+    yield promises_1.default.writeFile(tempPdfPath, fileBuffer);
+    try {
+        const pdf = yield ironpdf_1.PdfDocument.fromFile(tempPdfPath);
+        // Gerar imagem da primeira página
+        yield pdf.rasterizeToImageFiles(tempImagePath, {
+            type: ironpdf_1.ImageType.JPG,
+            fromPages: [0],
+        });
+        const pdfUrl = yield uploadToCloudinary(fileBuffer, "post-pdfs", "raw");
+        const coverImageBuffer = yield promises_1.default.readFile(tempImagePath);
+        const coverImageUrl = yield uploadToCloudinary(coverImageBuffer, "post-images", "image");
+        return { pdfUrl, coverImageUrl };
+    }
+    finally {
+        // Limpar arquivos temporários
+        yield promises_1.default.unlink(tempPdfPath).catch(() => { });
+        yield promises_1.default.unlink(tempImagePath).catch(() => { });
+    }
 });
-// Função de criação do post
+// Função para processar os arquivos de pergunta e resposta
+const processFiles = (files, folder, isQuestion) => __awaiter(void 0, void 0, void 0, function* () {
+    return Promise.all(files.map((file) => __awaiter(void 0, void 0, void 0, function* () {
+        if (file.mimetype === "application/pdf") {
+            const { pdfUrl, coverImageUrl } = yield processPdf(file.buffer);
+            return isQuestion
+                ? { original: pdfUrl, cover: coverImageUrl }
+                : { original: pdfUrl, cover: coverImageUrl };
+        }
+        else {
+            const imageUrl = yield uploadToCloudinary(file.buffer, folder, "image");
+            return isQuestion
+                ? { original: imageUrl, cover: imageUrl }
+                : { original: imageUrl, cover: imageUrl };
+        }
+    })));
+});
 const create = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { subject, questionTitle, questionDescription, answerTitle, answerDescription } = req.body;
@@ -98,20 +104,10 @@ const create = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
         }
         const { fileQuestion, fileAnswer } = req.files;
         if (!fileQuestion || fileQuestion.length === 0) {
-            res.status(400).json({ error: "Imagem(s) ou arquivo(s) PDF da pergunta são obrigatórios." });
+            res.status(400).json({ error: "Imagem(s) ou PDF(s) da pergunta são obrigatórios." });
             return;
         }
-        // Fazendo o upload dos arquaaivos PDF
-        const fileQuestionUrls = yield Promise.all(fileQuestion.map((file) => __awaiter(void 0, void 0, void 0, function* () {
-            const originalUrl = yield uploadFileToCloudinary(file);
-            // Gera a capa para PDFs
-            let coverUrl;
-            if (file.mimetype === "application/pdf") {
-                const coverBuffer = yield generatePdfCover(file.buffer);
-                coverUrl = yield uploadFileToCloudinary(Object.assign(Object.assign({}, file), { buffer: coverBuffer, originalname: `cover-${file.originalname}`, mimetype: "image/png" }));
-            }
-            return { original: originalUrl, cover: coverUrl };
-        })));
+        const fileQuestionUrls = yield processFiles(fileQuestion, "post-images", true);
         const data = {
             subject,
             questionTitle,
@@ -119,7 +115,7 @@ const create = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
             fileQuestionUrls,
         };
         if (answerTitle || answerDescription || (fileAnswer && fileAnswer.length > 0)) {
-            const fileAnswerUrls = fileAnswer ? yield Promise.all(fileAnswer.map(uploadFileToCloudinary)) : [];
+            const fileAnswerUrls = fileAnswer ? yield processFiles(fileAnswer, "post-images", false) : [];
             data.answers = [
                 {
                     answerTitle: answerTitle || null,
