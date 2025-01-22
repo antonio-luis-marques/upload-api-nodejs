@@ -3,10 +3,10 @@ import PostModel from "../../models/post/app";
 
 const getPosts = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { search, sort = "createdAt", order = "desc" } = req.query;
+    const { search, sort = "createdAt", order = "desc", page = 1, limit = 10 } = req.query;
 
     // Verificar campos de ordenação válidos
-    const allowedSortFields = ["createdAt", "updatedAt", "subject"];
+    const allowedSortFields = ["createdAt", "updatedAt", "title"];
     if (!allowedSortFields.includes(sort as string)) {
       res.status(400).json({ error: "Campo de ordenação inválido." });
       return;
@@ -18,6 +18,10 @@ const getPosts = async (req: Request, res: Response): Promise<void> => {
       res.status(400).json({ error: "Ordem de ordenação inválida." });
       return;
     }
+
+    // Paginação
+    const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+    const take = parseInt(limit as string);
 
     // Normalizar e ajustar o campo de busca
     const decodedSearch = search ? decodeURIComponent(search as string) : "";
@@ -32,22 +36,26 @@ const getPosts = async (req: Request, res: Response): Promise<void> => {
     const query = normalizedSearch
       ? {
           $or: [
-            { subject: { $regex: normalizedSearch, $options: "i" } },
-            { questionTitle: { $regex: normalizedSearch, $options: "i" } },
-            { questionDescription: { $regex: normalizedSearch, $options: "i" } },
-            { "answers.answerDescription": { $regex: normalizedSearch, $options: "i" } },
-            { "answers.answerTitle": { $regex: normalizedSearch, $options: "i" } },
+            { title: { $regex: normalizedSearch, $options: "i" } }, // Buscar por título
+            { description: { $regex: normalizedSearch, $options: "i" } }, // Buscar por descrição
           ],
         }
       : {};
 
-    // Buscar todos os posts (sem paginação ou limite)
-    const posts = await PostModel.find(query).sort({ [sort as string]: sortOrder });
-    const totalPosts = posts.length;
+    // Buscar posts com paginação
+    const posts = await PostModel.find(query)
+      .skip(skip)
+      .limit(take)
+      .sort({ [sort as string]: sortOrder });
+
+    // Contar o total de posts para a paginação
+    const totalPosts = await PostModel.countDocuments(query);
 
     res.status(200).json({
       posts,
       total: totalPosts,
+      page: parseInt(page as string),
+      totalPages: Math.ceil(totalPosts / take),
     });
   } catch (error) {
     console.error(error);

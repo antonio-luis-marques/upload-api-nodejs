@@ -1,57 +1,46 @@
-import { Document, Schema, model } from "mongoose";
+import mongoose, { Schema, Document } from 'mongoose';
 
-// Interface para as respostas
-interface IAnswer {
-  answerTitle?: string;
-  answerDescription?: string;
-  fileAnswerUrls?: string[];
-}
-
-// Interface para URLs de arquivos da pergunta
-interface IFileQuestionUrl {
-  original: string;
-  cover?: string | null; // Pode ser string, undefined ou null
-}
-
-// Interface para o Post
+// Definição da interface para o Post
 interface IPost extends Document {
-  subject: string;
-  questionTitle: string;
-  questionDescription: string;
-  fileQuestionUrls?: IFileQuestionUrl[]; // Estrutura alterada
-  answers: IAnswer[];
+  title: string;
+  description: string;
+  pdfUrl?: string;
+  imageUrl?: string;
+  createdAt: Date;
 }
 
-// Schema para as respostas
-const AnswerSchema: Schema = new Schema<IAnswer>(
+// Definição do schema para o Post
+const postSchema: Schema = new Schema(
   {
-    answerTitle: { type: String, required: false },
-    answerDescription: { type: String, required: false },
-    fileAnswerUrls: { type: [String], required: false },
-  },
-  { timestamps: true }
-);
-
-// Schema para os Posts
-const PostSchema: Schema = new Schema<IPost>(
-  {
-    subject: { type: String, required: true },
-    questionTitle: { type: String, required: true },
-    questionDescription: { type: String, required: true },
-    fileQuestionUrls: {
-      type: [
-        {
-          original: { type: String, required: true },
-          cover: { type: String, required: false },
-        },
-      ],
-      required: false, // Agora é opcional
+    title: {
+      type: String,
+      required: true,
+      trim: true,
     },
-    answers: [AnswerSchema],
+    description: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    pdfUrl: {
+      type: String,
+      default: null,
+    },
+    imageUrl: {
+      type: String,
+      default: null,
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now,
+    },
   },
-  { timestamps: true }
+  {
+    timestamps: true, // Isso irá adicionar `createdAt` e `updatedAt` automaticamente
+  }
 );
 
-// Criação do modelo
-const PostModel = model<IPost>("Post", PostSchema);
+// Criando o modelo do Post com base no schema
+const PostModel = mongoose.model<IPost>('Post', postSchema);
+
 export default PostModel;

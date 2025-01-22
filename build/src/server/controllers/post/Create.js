@@ -16,6 +16,7 @@ exports.create = exports.uploadMiddleware = void 0;
 const multer_1 = __importDefault(require("multer"));
 const cloudinary_1 = require("cloudinary");
 const app_1 = __importDefault(require("../../models/post/app"));
+// Configuração do Cloudinary
 cloudinary_1.v2.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "",
     api_key: process.env.CLOUDINARY_API_KEY || "",
@@ -34,9 +35,10 @@ const upload = (0, multer_1.default)({
         cb(null, true);
     },
 });
+// Middleware de upload de arquivos
 const uploadMiddleware = upload.fields([
-    { name: "fileQuestion", maxCount: 5 },
-    { name: "fileAnswer", maxCount: 5 },
+    { name: "pdfFile", maxCount: 1 },
+    { name: "imageFile", maxCount: 1 },
 ]);
 exports.uploadMiddleware = uploadMiddleware;
 // Função para enviar arquivo ao Cloudinary
@@ -53,60 +55,29 @@ const uploadToCloudinary = (buffer, folder, resourceType) => __awaiter(void 0, v
         stream.end(buffer);
     });
 });
-// Processamento de arquivos
-const processFiles = (files, folder) => __awaiter(void 0, void 0, void 0, function* () {
-    return Promise.all(files.map((file) => __awaiter(void 0, void 0, void 0, function* () {
-        // Faz upload do arquivo original
-        const originalUrl = yield uploadToCloudinary(file.buffer, folder, file.mimetype.startsWith("image/") ? "image" : "raw");
-        return { original: originalUrl }; // Retorna apenas a URL do arquivo
-    })));
-});
 // Controlador para criação de posts
 const create = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const { subject, questionTitle, questionDescription, answerTitle, answerDescription, fileQuestionCovers, fileAnswerCovers, } = req.body;
-        if (!subject || !questionTitle || !questionDescription) {
-            res.status(400).json({
-                error: "Os campos subject, questionTitle e questionDescription são obrigatórios.",
-            });
-            return;
+        const { title, description } = req.body;
+        const { pdfFile, imageFile } = req.files;
+        // Enviar arquivo para o Cloudinary
+        let pdfUrl = null;
+        let imageUrl = null;
+        if (pdfFile && pdfFile[0]) {
+            pdfUrl = yield uploadToCloudinary(pdfFile[0].buffer, "post-files", "raw");
         }
-        const { fileQuestion, fileAnswer } = req.files;
-        if (!fileQuestion || fileQuestion.length === 0) {
-            res.status(400).json({ error: "Imagem(s) ou PDF(s) da pergunta são obrigatórios." });
-            return;
+        if (imageFile && imageFile[0]) {
+            imageUrl = yield uploadToCloudinary(imageFile[0].buffer, "post-files", "image");
         }
-        // Processa os arquivos recebidos
-        const fileQuestionUrls = yield processFiles(fileQuestion, "post-files");
-        const fileAnswerUrls = fileAnswer ? yield processFiles(fileAnswer, "post-files") : [];
-        // Combina os dados dos arquivos com as capas enviadas (opcionais)
-        const processedQuestions = fileQuestionUrls.map((file, index) => ({
-            original: file.original,
-            cover: (fileQuestionCovers === null || fileQuestionCovers === void 0 ? void 0 : fileQuestionCovers[index]) || null, // Capa opcional
-        }));
-        const processedAnswers = fileAnswerUrls.map((file, index) => ({
-            original: file.original,
-            cover: (fileAnswerCovers === null || fileAnswerCovers === void 0 ? void 0 : fileAnswerCovers[index]) || null, // Capa opcional
-        }));
-        // Dados a serem salvos no banco de dados
-        const data = {
-            subject,
-            questionTitle,
-            questionDescription,
-            fileQuestionUrls: processedQuestions,
-        };
-        if (answerTitle || answerDescription || processedAnswers.length > 0) {
-            data.answers = [
-                {
-                    answerTitle: answerTitle || null,
-                    answerDescription: answerDescription || null,
-                    fileAnswerUrls: processedAnswers,
-                },
-            ];
-        }
-        const newPost = new app_1.default(data);
+        // Salvar os dados no MongoDB
+        const newPost = new app_1.default({
+            title,
+            description,
+            pdfUrl,
+            imageUrl,
+        });
         yield newPost.save();
-        res.status(201).json({ message: "Post criado com sucesso!", data });
+        res.status(201).json({ message: "Post criado com sucesso!" });
     }
     catch (error) {
         console.error(error);

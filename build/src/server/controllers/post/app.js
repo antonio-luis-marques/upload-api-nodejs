@@ -37,5 +37,4 @@ exports.PostController = void 0;
 const create = __importStar(require("./Create"));
 const getPosts = __importStar(require("./Get"));
 const getPostById = __importStar(require("./GetById"));
-const addAnswer = __importStar(require("./Update"));
-exports.PostController = Object.assign(Object.assign(Object.assign(Object.assign({}, create), getPosts), getPostById), addAnswer);
+exports.PostController = Object.assign(Object.assign(Object.assign({}, create), getPosts), getPostById);

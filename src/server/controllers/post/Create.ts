@@ -3,6 +3,7 @@ import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
 import PostModel from "../../models/post/app";
 
+// Configuração do Cloudinary
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "",
   api_key: process.env.CLOUDINARY_API_KEY || "",
@@ -24,9 +25,10 @@ const upload = multer({
   },
 });
 
+// Middleware de upload de arquivos
 const uploadMiddleware = upload.fields([
-  { name: "fileQuestion", maxCount: 5 },
-  { name: "fileAnswer", maxCount: 5 },
+  { name: "pdfFile", maxCount: 1 },
+  { name: "imageFile", maxCount: 1 },
 ]);
 
 // Função para enviar arquivo ao Cloudinary
@@ -50,89 +52,35 @@ const uploadToCloudinary = async (
   });
 };
 
-// Processamento de arquivos
-const processFiles = async (files: Express.Multer.File[], folder: string) => {
-  return Promise.all(
-    files.map(async (file) => {
-      // Faz upload do arquivo original
-      const originalUrl = await uploadToCloudinary(
-        file.buffer,
-        folder,
-        file.mimetype.startsWith("image/") ? "image" : "raw"
-      );
-
-      return { original: originalUrl }; // Retorna apenas a URL do arquivo
-    })
-  );
-};
-
 // Controlador para criação de posts
 const create = async (req: Request, res: Response): Promise<void> => {
   try {
-    const {
-      subject,
-      questionTitle,
-      questionDescription,
-      answerTitle,
-      answerDescription,
-      fileQuestionCovers,
-      fileAnswerCovers,
-    } = req.body;
+    const { title, description } = req.body;
+    const { pdfFile, imageFile } = req.files as { pdfFile?: Express.Multer.File[]; imageFile?: Express.Multer.File[] };
 
-    if (!subject || !questionTitle || !questionDescription) {
-      res.status(400).json({
-        error: "Os campos subject, questionTitle e questionDescription são obrigatórios.",
-      });
-      return;
+    // Enviar arquivo para o Cloudinary
+    let pdfUrl = null;
+    let imageUrl = null;
+
+    if (pdfFile && pdfFile[0]) {
+      pdfUrl = await uploadToCloudinary(pdfFile[0].buffer, "post-files", "raw");
     }
 
-    const { fileQuestion, fileAnswer } = req.files as {
-      fileQuestion?: Express.Multer.File[];
-      fileAnswer?: Express.Multer.File[];
-    };
-
-    if (!fileQuestion || fileQuestion.length === 0) {
-      res.status(400).json({ error: "Imagem(s) ou PDF(s) da pergunta são obrigatórios." });
-      return;
+    if (imageFile && imageFile[0]) {
+      imageUrl = await uploadToCloudinary(imageFile[0].buffer, "post-files", "image");
     }
 
-    // Processa os arquivos recebidos
-    const fileQuestionUrls = await processFiles(fileQuestion, "post-files");
-    const fileAnswerUrls = fileAnswer ? await processFiles(fileAnswer, "post-files") : [];
+    // Salvar os dados no MongoDB
+    const newPost = new PostModel({
+      title,
+      description,
+      pdfUrl,
+      imageUrl,
+    });
 
-    // Combina os dados dos arquivos com as capas enviadas (opcionais)
-    const processedQuestions = fileQuestionUrls.map((file, index) => ({
-      original: file.original,
-      cover: fileQuestionCovers?.[index] || null, // Capa opcional
-    }));
-
-    const processedAnswers = fileAnswerUrls.map((file, index) => ({
-      original: file.original,
-      cover: fileAnswerCovers?.[index] || null, // Capa opcional
-    }));
-
-    // Dados a serem salvos no banco de dados
-    const data: Record<string, any> = {
-      subject,
-      questionTitle,
-      questionDescription,
-      fileQuestionUrls: processedQuestions,
-    };
-
-    if (answerTitle || answerDescription || processedAnswers.length > 0) {
-      data.answers = [
-        {
-          answerTitle: answerTitle || null,
-          answerDescription: answerDescription || null,
-          fileAnswerUrls: processedAnswers,
-        },
-      ];
-    }
-
-    const newPost = new PostModel(data);
     await newPost.save();
 
-    res.status(201).json({ message: "Post criado com sucesso!", data });
+    res.status(201).json({ message: "Post criado com sucesso!" });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Erro ao criar o post." });
