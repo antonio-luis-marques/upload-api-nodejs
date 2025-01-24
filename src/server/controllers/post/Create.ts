@@ -35,7 +35,7 @@ const uploadMiddleware = upload.fields([
 const uploadToCloudinary = async (
   buffer: Buffer,
   folder: string,
-  resourceType: "image" | "raw"
+  resourceType: "image" | "auto"
 ): Promise<string> => {
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
@@ -63,7 +63,7 @@ const create = async (req: Request, res: Response): Promise<void> => {
     let imageUrl = null;
 
     if (pdfFile && pdfFile[0]) {
-      pdfUrl = await uploadToCloudinary(pdfFile[0].buffer, "post-files", "raw");
+      pdfUrl = await uploadToCloudinary(pdfFile[0].buffer, "post-files", "auto");
     }
 
     if (imageFile && imageFile[0]) {
