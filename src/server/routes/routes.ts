@@ -11,6 +11,7 @@ router.get('/post/:id', PostController.getPostById);
 
 router.post('/create/user', UserController.uploadMiddleware, UserController.createUser)
 router.get('/users', UserController.getAllUsers)
+
 router.get('/user/:id', UserController.getUserById)
 
 export {router}

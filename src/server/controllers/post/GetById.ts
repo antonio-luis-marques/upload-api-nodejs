@@ -4,6 +4,7 @@ import PostModel from "../../models/post/app";
 
 const getPostById = async (req: Request, res: Response): Promise<void> => {
   try {
+    
     const { id } = req.params; // Obtém o ID dos parâmetros da requisição
 
     // Valida o ID antes de buscar no banco

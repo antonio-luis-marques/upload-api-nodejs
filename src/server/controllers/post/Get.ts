@@ -23,24 +23,31 @@ const getPosts = async (req: Request, res: Response): Promise<void> => {
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
     const take = parseInt(limit as string);
 
-    // Normalizar e ajustar o campo de busca
-    const decodedSearch = search ? decodeURIComponent(search as string) : "";
-    const searchWithSpaces = decodedSearch.replace(/\+/g, " ");
-    const normalizedSearch = searchWithSpaces
-      ? searchWithSpaces.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    // Ajustar a query para normalizar os campos `title` e `description`
+    const searchString = typeof search === "string" ? search : ""; // Garantir que seja uma string
+
+    const normalizedSearch = searchString
+      ? searchString.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
       : "";
 
-    const sortOrder = order === "desc" ? -1 : 1;
-
-    // Construir query para o filtro de busca
-    const query = normalizedSearch
+      const query = normalizedSearch
       ? {
           $or: [
-            { title: { $regex: normalizedSearch, $options: "i" } }, // Buscar por título
-            { description: { $regex: normalizedSearch, $options: "i" } }, // Buscar por descrição
+            {
+              title: {
+                $regex: new RegExp(normalizedSearch.normalize("NFD").replace(/[\u0300-\u036f]/g, ""), "i"), // Normaliza o título e ignora acentos
+              },
+            },
+            {
+              description: {
+                $regex: new RegExp(normalizedSearch.normalize("NFD").replace(/[\u0300-\u036f]/g, ""), "i"), // Normaliza a descrição e ignora acentos
+              },
+            },
           ],
         }
-      : {};
+      : {};    
+
+    const sortOrder = order === "desc" ? -1 : 1;
 
     // Buscar posts com paginação
     const posts = await PostModel.find(query)
